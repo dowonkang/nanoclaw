@@ -54,10 +54,10 @@ export class TelegramChannel implements Channel {
   }
 
   async connect(): Promise<void> {
+    // Force IPv4 — api.telegram.org has no IPv6 route on this host
+    const ipv4Agent = new https.Agent({ family: 4 });
     this.bot = new Bot(this.botToken, {
-      client: {
-        baseFetchConfig: { agent: https.globalAgent, compress: true },
-      },
+      client: { baseFetchConfig: { agent: ipv4Agent } },
     });
 
     // Command to get chat ID (useful for registration)
@@ -219,21 +219,20 @@ export class TelegramChannel implements Channel {
       logger.error({ err: err.message }, 'Telegram bot error');
     });
 
-    // Start polling — returns a Promise that resolves when started
-    return new Promise<void>((resolve) => {
-      this.bot!.start({
-        onStart: (botInfo) => {
-          logger.info(
-            { username: botInfo.username, id: botInfo.id },
-            'Telegram bot connected',
-          );
-          console.log(`\n  Telegram bot: @${botInfo.username}`);
-          console.log(
-            `  Send /chatid to the bot to get a chat's registration ID\n`,
-          );
-          resolve();
-        },
-      });
+    // Verify the token and log bot info, then start polling in the background.
+    // bot.start() only calls onStart after the first long-poll returns (~100s),
+    // so we resolve connect() immediately after getMe() succeeds instead.
+    const botInfo = await this.bot!.api.getMe();
+    logger.info(
+      { username: botInfo.username, id: botInfo.id },
+      'Telegram bot connected',
+    );
+    console.log(`\n  Telegram bot: @${botInfo.username}`);
+    console.log(`  Send /chatid to the bot to get a chat's registration ID\n`);
+
+    // Start polling in the background — do not await
+    this.bot!.start().catch((err) => {
+      logger.error({ err }, 'Telegram polling error');
     });
   }
 
