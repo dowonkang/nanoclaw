@@ -190,8 +190,18 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  if (fs.existsSync(agentRunnerSrc)) {
+    if (!fs.existsSync(groupAgentRunnerDir)) {
+      fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+    } else {
+      // Always sync ipc-mcp-stdio.ts from canonical source so new MCP tools
+      // are available in existing sessions without manual intervention.
+      const mpcFile = 'ipc-mcp-stdio.ts';
+      const src = path.join(agentRunnerSrc, mpcFile);
+      if (fs.existsSync(src)) {
+        fs.cpSync(src, path.join(groupAgentRunnerDir, mpcFile));
+      }
+    }
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,

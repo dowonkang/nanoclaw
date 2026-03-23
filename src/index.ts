@@ -30,6 +30,7 @@ import {
 import {
   getAllChats,
   getAllRegisteredGroups,
+  deleteSession,
   getAllSessions,
   getAllTasks,
   getMessagesSince,
@@ -69,6 +70,7 @@ export { escapeXml, formatMessages } from './router.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
+const previousSessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
@@ -198,6 +200,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       closeStdin: () => queue.closeStdin(chatJid),
       advanceCursor: (ts) => { lastAgentTimestamp[chatJid] = ts; saveState(); },
       formatMessages,
+      clearSession: () => {
+        if (sessions[group.folder]) {
+          previousSessions[group.folder] = sessions[group.folder];
+        }
+        deleteSession(group.folder);
+        delete sessions[group.folder];
+      },
+      resumeSession: () => {
+        const prev = previousSessions[group.folder];
+        if (!prev) return false;
+        sessions[group.folder] = prev;
+        setSession(group.folder, prev);
+        delete previousSessions[group.folder];
+        return true;
+      },
+      isCommandSenderAuthorized: (msg) =>
+        isMainGroup || msg.is_from_me === true || isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist()),
       canSenderInteract: (msg) => {
         const hasTrigger = TRIGGER_PATTERN.test(msg.content.trim());
         const reqTrigger = !isMainGroup && group.requiresTrigger !== false;
@@ -448,7 +467,10 @@ async function startMessageLoop(): Promise<void> {
             // Only close active container if the sender is authorized — otherwise an
             // untrusted user could kill in-flight work by sending /compact (DoS).
             // closeStdin no-ops internally when no container is active.
-            if (isSessionCommandAllowed(isMainGroup, loopCmdMsg.is_from_me === true)) {
+            const loopCmdAllowed = isMainGroup
+              || loopCmdMsg.is_from_me === true
+              || isTriggerAllowed(chatJid, loopCmdMsg.sender, loadSenderAllowlist());
+            if (loopCmdAllowed) {
               queue.closeStdin(chatJid);
             }
             // Enqueue so processGroupMessages handles auth + cursor advancement.
@@ -695,6 +717,15 @@ async function main(): Promise<void> {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
+    },
+    sendReaction: async (jid, emoji, messageId) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (messageId && channel.sendReaction) {
+        await channel.sendReaction(jid, messageId, emoji);
+      } else if (channel.reactToLatestMessage) {
+        await channel.reactToLatestMessage(jid, emoji);
+      }
     },
     registeredGroups: () => registeredGroups,
     registerGroup,

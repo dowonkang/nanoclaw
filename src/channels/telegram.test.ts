@@ -8,6 +8,12 @@ vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
 // Mock env reader (used by the factory, not needed in unit tests)
 vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 
+// Mock db
+vi.mock('../db.js', () => ({
+  storeReaction: vi.fn(),
+  getLatestMessage: vi.fn(() => ({ id: '100', fromMe: false })),
+}));
+
 // Mock config
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
@@ -40,6 +46,8 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      getMe: vi.fn().mockResolvedValue({ username: 'andy_ai_bot', id: 12345 }),
+      setMessageReaction: vi.fn().mockResolvedValue(undefined),
     };
 
     constructor(token: string) {
@@ -61,8 +69,8 @@ vi.mock('grammy', () => ({
       this.errorHandler = handler;
     }
 
-    start(opts: { onStart: (botInfo: any) => void }) {
-      opts.onStart({ username: 'andy_ai_bot', id: 12345 });
+    start(_opts?: any) {
+      return Promise.resolve();
     }
 
     stop() {}

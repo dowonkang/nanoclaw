@@ -2,6 +2,7 @@ import https from 'https';
 import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { getLatestMessage, storeReaction } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -181,7 +182,8 @@ export class TelegramChannel implements Channel {
       }
 
       const chatJid = `tg:${ctx.chat.id}`;
-      let content = ctx.message.text;
+      // Normalize /cmd@botname → /cmd (Telegram appends @botname in group slash commands)
+      let content = ctx.message.text.replace(/^(\/\w+)@\w+/, '$1');
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
         ctx.from?.first_name ||
@@ -304,6 +306,72 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
     this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
 
+    // Handle incoming reactions
+    this.bot.on('message_reaction', (ctx) => {
+      try {
+        const update = ctx.messageReaction;
+        if (!update) return;
+
+        const chatJid = `tg:${update.chat.id}`;
+        const group = this.opts.registeredGroups()[chatJid];
+        if (!group) return;
+
+        const messageId = update.message_id.toString();
+        const reactorJid = update.user?.id?.toString() || '';
+        const reactorName =
+          update.user?.first_name ||
+          update.user?.username ||
+          '';
+        const timestamp = new Date(update.date * 1000).toISOString();
+
+        // new_reaction contains the current reactions after the change
+        const newEmojis = (update.new_reaction || [])
+          .filter((r: any) => r.type === 'emoji')
+          .map((r: any) => r.emoji);
+        const oldEmojis = (update.old_reaction || [])
+          .filter((r: any) => r.type === 'emoji')
+          .map((r: any) => r.emoji);
+
+        // Store new reactions
+        for (const emoji of newEmojis) {
+          if (!oldEmojis.includes(emoji)) {
+            storeReaction({
+              message_id: messageId,
+              message_chat_jid: chatJid,
+              reactor_jid: reactorJid,
+              reactor_name: reactorName,
+              emoji,
+              timestamp,
+            });
+            logger.info(
+              { chatJid, messageId, emoji, reactor: reactorName },
+              'Telegram reaction added',
+            );
+          }
+        }
+
+        // Remove old reactions that are no longer present
+        for (const emoji of oldEmojis) {
+          if (!newEmojis.includes(emoji)) {
+            storeReaction({
+              message_id: messageId,
+              message_chat_jid: chatJid,
+              reactor_jid: reactorJid,
+              reactor_name: reactorName,
+              emoji: '', // empty emoji = remove
+              timestamp,
+            });
+            logger.info(
+              { chatJid, messageId, emoji, reactor: reactorName },
+              'Telegram reaction removed',
+            );
+          }
+        }
+      } catch (err) {
+        logger.error({ err }, 'Failed to process Telegram reaction');
+      }
+    });
+
     // Handle errors gracefully
     this.bot.catch((err) => {
       logger.error({ err: err.message }, 'Telegram bot error');
@@ -321,7 +389,8 @@ export class TelegramChannel implements Channel {
     console.log(`  Send /chatid to the bot to get a chat's registration ID\n`);
 
     // Start polling in the background — do not await
-    this.bot!.start().catch((err) => {
+    // Include message_reaction in allowed_updates (Telegram requires explicit opt-in)
+    this.bot!.start({ allowed_updates: ['message', 'message_reaction'] }).catch((err) => {
       logger.error({ err }, 'Telegram polling error');
     });
   }
@@ -351,6 +420,7 @@ export class TelegramChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+      throw err;
     }
   }
 
@@ -368,6 +438,51 @@ export class TelegramChannel implements Channel {
       this.bot = null;
       logger.info('Telegram bot stopped');
     }
+  }
+
+  async sendReaction(
+    chatJid: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<void> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
+    }
+    try {
+      const numericChatId = chatJid.replace(/^tg:/, '');
+      const numericMsgId = parseInt(messageId, 10);
+      if (isNaN(numericMsgId)) {
+        logger.warn({ messageId }, 'Invalid Telegram message ID for reaction');
+        return;
+      }
+      // Telegram only supports a limited set of reaction emojis. Map common
+      // status emojis that are not in Telegram's allowed set to equivalents.
+      const COMPAT: Record<string, string> = {
+        '\u2705': '\uD83D\uDC4D', // ✅ → 👍
+        '\u274C': '\uD83D\uDC4E', // ❌ → 👎
+        '\uD83D\uDD04': '\u26A1',  // 🔄 → ⚡
+        '\uD83D\uDCAD': '\uD83E\uDD14', // 💭 → 🤔
+      };
+      const mappedEmoji = (emoji && COMPAT[emoji]) ? COMPAT[emoji] : emoji;
+      // Cast emoji to satisfy grammY's strict ReactionTypeEmoji union type
+      const reaction = mappedEmoji
+        ? [{ type: 'emoji' as const, emoji: mappedEmoji as any }]
+        : [];
+      await this.bot.api.setMessageReaction(numericChatId, numericMsgId, reaction);
+      logger.info({ chatJid, messageId, emoji: mappedEmoji }, 'Telegram reaction sent');
+    } catch (err) {
+      logger.error({ chatJid, messageId, emoji, err }, 'Failed to send Telegram reaction');
+    }
+  }
+
+  async reactToLatestMessage(chatJid: string, emoji: string): Promise<void> {
+    const latest = getLatestMessage(chatJid);
+    if (!latest) {
+      logger.warn({ chatJid }, 'No messages found to react to');
+      return;
+    }
+    await this.sendReaction(chatJid, latest.id, emoji);
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
