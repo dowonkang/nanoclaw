@@ -4,13 +4,23 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, HOST_SCRIPTS_PATH, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  DATA_DIR,
+  HOST_SCRIPTS_PATH,
+  IPC_POLL_INTERVAL,
+  TIMEZONE,
+} from './config.js';
 import { sendPoolMessage } from './channels/telegram.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
-import { HostScript, HostScriptsConfig, HostScriptResult, RegisteredGroup } from './types.js';
+import {
+  HostScript,
+  HostScriptsConfig,
+  HostScriptResult,
+  RegisteredGroup,
+} from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -514,7 +524,10 @@ export async function processTaskIpc(
 
     case 'run_host_script': {
       if (!data.scriptName || !data.requestId) {
-        logger.warn({ data }, 'run_host_script: missing scriptName or requestId');
+        logger.warn(
+          { data },
+          'run_host_script: missing scriptName or requestId',
+        );
         break;
       }
 
@@ -584,7 +597,11 @@ export async function processTaskIpc(
           ...result,
         });
         logger.info(
-          { sourceGroup, scriptName: data.scriptName, exitCode: result.exitCode },
+          {
+            sourceGroup,
+            scriptName: data.scriptName,
+            exitCode: result.exitCode,
+          },
           'Host script completed',
         );
       } catch (err) {
