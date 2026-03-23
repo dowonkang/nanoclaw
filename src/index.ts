@@ -60,7 +60,11 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
-import { extractSessionCommand, handleSessionCommand, isSessionCommandAllowed } from './session-commands.js';
+import {
+  extractSessionCommand,
+  handleSessionCommand,
+  isSessionCommandAllowed,
+} from './session-commands.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -195,10 +199,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     timezone: TIMEZONE,
     deps: {
       sendMessage: (text) => channel.sendMessage(chatJid, text),
-      setTyping: (typing) => channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
-      runAgent: (prompt, onOutput) => runAgent(group, prompt, chatJid, onOutput),
+      setTyping: (typing) =>
+        channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
+      runAgent: (prompt, onOutput) =>
+        runAgent(group, prompt, chatJid, onOutput),
       closeStdin: () => queue.closeStdin(chatJid),
-      advanceCursor: (ts) => { lastAgentTimestamp[chatJid] = ts; saveState(); },
+      advanceCursor: (ts) => {
+        lastAgentTimestamp[chatJid] = ts;
+        saveState();
+      },
       formatMessages,
       clearSession: () => {
         if (sessions[group.folder]) {
@@ -216,14 +225,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         return true;
       },
       isCommandSenderAuthorized: (msg) =>
-        isMainGroup || msg.is_from_me === true || isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist()),
+        isMainGroup ||
+        msg.is_from_me === true ||
+        isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist()),
       canSenderInteract: (msg) => {
         const hasTrigger = TRIGGER_PATTERN.test(msg.content.trim());
         const reqTrigger = !isMainGroup && group.requiresTrigger !== false;
-        return isMainGroup || !reqTrigger || (hasTrigger && (
-          msg.is_from_me ||
-          isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())
-        ));
+        return (
+          isMainGroup ||
+          !reqTrigger ||
+          (hasTrigger &&
+            (msg.is_from_me ||
+              isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
+        );
       },
     },
   });
@@ -467,9 +481,14 @@ async function startMessageLoop(): Promise<void> {
             // Only close active container if the sender is authorized — otherwise an
             // untrusted user could kill in-flight work by sending /compact (DoS).
             // closeStdin no-ops internally when no container is active.
-            const loopCmdAllowed = isMainGroup
-              || loopCmdMsg.is_from_me === true
-              || isTriggerAllowed(chatJid, loopCmdMsg.sender, loadSenderAllowlist());
+            const loopCmdAllowed =
+              isMainGroup ||
+              loopCmdMsg.is_from_me === true ||
+              isTriggerAllowed(
+                chatJid,
+                loopCmdMsg.sender,
+                loadSenderAllowlist(),
+              );
             if (loopCmdAllowed) {
               queue.closeStdin(chatJid);
             }

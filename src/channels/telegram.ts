@@ -319,9 +319,7 @@ export class TelegramChannel implements Channel {
         const messageId = update.message_id.toString();
         const reactorJid = update.user?.id?.toString() || '';
         const reactorName =
-          update.user?.first_name ||
-          update.user?.username ||
-          '';
+          update.user?.first_name || update.user?.username || '';
         const timestamp = new Date(update.date * 1000).toISOString();
 
         // new_reaction contains the current reactions after the change
@@ -390,9 +388,11 @@ export class TelegramChannel implements Channel {
 
     // Start polling in the background — do not await
     // Include message_reaction in allowed_updates (Telegram requires explicit opt-in)
-    this.bot!.start({ allowed_updates: ['message', 'message_reaction'] }).catch((err) => {
-      logger.error({ err }, 'Telegram polling error');
-    });
+    this.bot!.start({ allowed_updates: ['message', 'message_reaction'] }).catch(
+      (err) => {
+        logger.error({ err }, 'Telegram polling error');
+      },
+    );
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
@@ -461,18 +461,28 @@ export class TelegramChannel implements Channel {
       const COMPAT: Record<string, string> = {
         '\u2705': '\uD83D\uDC4D', // ✅ → 👍
         '\u274C': '\uD83D\uDC4E', // ❌ → 👎
-        '\uD83D\uDD04': '\u26A1',  // 🔄 → ⚡
+        '\uD83D\uDD04': '\u26A1', // 🔄 → ⚡
         '\uD83D\uDCAD': '\uD83E\uDD14', // 💭 → 🤔
       };
-      const mappedEmoji = (emoji && COMPAT[emoji]) ? COMPAT[emoji] : emoji;
+      const mappedEmoji = emoji && COMPAT[emoji] ? COMPAT[emoji] : emoji;
       // Cast emoji to satisfy grammY's strict ReactionTypeEmoji union type
       const reaction = mappedEmoji
         ? [{ type: 'emoji' as const, emoji: mappedEmoji as any }]
         : [];
-      await this.bot.api.setMessageReaction(numericChatId, numericMsgId, reaction);
-      logger.info({ chatJid, messageId, emoji: mappedEmoji }, 'Telegram reaction sent');
+      await this.bot.api.setMessageReaction(
+        numericChatId,
+        numericMsgId,
+        reaction,
+      );
+      logger.info(
+        { chatJid, messageId, emoji: mappedEmoji },
+        'Telegram reaction sent',
+      );
     } catch (err) {
-      logger.error({ chatJid, messageId, emoji, err }, 'Failed to send Telegram reaction');
+      logger.error(
+        { chatJid, messageId, emoji, err },
+        'Failed to send Telegram reaction',
+      );
     }
   }
 
