@@ -156,6 +156,15 @@ Chronological record of customizations applied to this NanoClaw instance.
 
 ---
 
+## 2026-03-23 — Agent Swarm Group & 3rd Pool Bot
+
+### Config: Telegram Bot Pool Expanded
+- Added 3rd pool bot (`maclaw_swarm_3_bot`) to `TELEGRAM_BOT_POOL`
+- Fixed: plist `EnvironmentVariables` overrides `.env` — updated both files to keep in sync
+- Registered new Telegram group for agent swarm use
+
+---
+
 ## Installed Skill Branches
 
 | Branch | Purpose |
