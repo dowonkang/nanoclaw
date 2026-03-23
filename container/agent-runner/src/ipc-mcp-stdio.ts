@@ -333,6 +333,68 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+const INPUT_DIR = path.join(IPC_DIR, 'input');
+
+server.tool(
+  'run_host_script',
+  'Run a pre-approved script on the host machine and return its output. Use this for operations that require host access (e.g., git sync, file operations outside the container). Only scripts listed in the host allowlist can be run.',
+  {
+    script: z
+      .string()
+      .describe(
+        'Script name to run (must be in ~/.config/nanoclaw/host-scripts.json)',
+      ),
+  },
+  async (args) => {
+    const requestId = `hscript-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const responseFile = path.join(INPUT_DIR, `${requestId}.json`);
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'run_host_script',
+      scriptName: args.script,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Poll for response (max 60s, 500ms interval)
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responseFile)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          const output = [
+            `Exit code: ${result.exitCode}`,
+            result.stdout ? `stdout:\n${result.stdout}` : '',
+            result.stderr ? `stderr:\n${result.stderr}` : '',
+            result.error ? `Error: ${result.error}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n');
+          return {
+            content: [{ type: 'text' as const, text: output }],
+            isError: result.exitCode !== 0 || !!result.error,
+          };
+        } catch {
+          // Response file not fully written yet, keep polling
+        }
+      }
+    }
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Timeout: no response for script "${args.script}" after 60s`,
+        },
+      ],
+      isError: true,
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

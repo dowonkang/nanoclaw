@@ -1,14 +1,16 @@
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, HOST_SCRIPTS_PATH, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { sendPoolMessage } from './channels/telegram.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { HostScript, HostScriptsConfig, HostScriptResult, RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -23,6 +25,49 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   onTasksChanged: () => void;
+}
+
+function loadHostScriptsConfig(): HostScriptsConfig | null {
+  try {
+    if (!fs.existsSync(HOST_SCRIPTS_PATH)) return null;
+    return JSON.parse(fs.readFileSync(HOST_SCRIPTS_PATH, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeIpcResponse(filePath: string, data: HostScriptResult): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.renameSync(tmp, filePath);
+}
+
+function execHostScript(
+  script: HostScript,
+): Promise<Omit<HostScriptResult, 'requestId'>> {
+  return new Promise((resolve) => {
+    const timeout = script.timeout ?? 30000;
+    let stdout = '';
+    let stderr = '';
+    const proc = spawn('sh', ['-c', script.command], {
+      cwd: script.cwd,
+      env: process.env,
+      timeout,
+    });
+    proc.stdout.on('data', (d: Buffer) => {
+      stdout += d;
+    });
+    proc.stderr.on('data', (d: Buffer) => {
+      stderr += d;
+    });
+    proc.on('close', (code) =>
+      resolve({ exitCode: code ?? 1, stdout, stderr }),
+    );
+    proc.on('error', (err) =>
+      resolve({ exitCode: 1, stdout, stderr, error: err.message }),
+    );
+  });
 }
 
 let ipcWatcherRunning = false;
@@ -81,7 +126,16 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+                  if (data.sender && data.chatJid.startsWith('tg:')) {
+                    await sendPoolMessage(
+                      data.chatJid,
+                      data.text,
+                      data.sender,
+                      sourceGroup,
+                    );
+                  } else {
+                    await deps.sendMessage(data.chatJid, data.text);
+                  }
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
@@ -172,6 +226,9 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For run_host_script
+    scriptName?: string;
+    requestId?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -454,6 +511,93 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'run_host_script': {
+      if (!data.scriptName || !data.requestId) {
+        logger.warn({ data }, 'run_host_script: missing scriptName or requestId');
+        break;
+      }
+
+      const ipcBaseDir = path.join(DATA_DIR, 'ipc');
+      const responseFile = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'input',
+        `${data.requestId}.json`,
+      );
+
+      const config = loadHostScriptsConfig();
+      if (!config) {
+        logger.warn('run_host_script: no host-scripts.json config found');
+        writeIpcResponse(responseFile, {
+          requestId: data.requestId,
+          exitCode: 1,
+          stdout: '',
+          stderr: '',
+          error: `No host scripts configured at ${HOST_SCRIPTS_PATH}`,
+        });
+        break;
+      }
+
+      const script = config.scripts?.[data.scriptName];
+      if (!script) {
+        writeIpcResponse(responseFile, {
+          requestId: data.requestId,
+          exitCode: 1,
+          stdout: '',
+          stderr: '',
+          error: `Script "${data.scriptName}" not in allowlist`,
+        });
+        break;
+      }
+
+      const allowed = script.allowedGroups;
+      const groupAllowed =
+        !allowed ||
+        allowed.includes('*') ||
+        (allowed.includes('main') && isMain) ||
+        allowed.includes(sourceGroup);
+
+      if (!groupAllowed) {
+        logger.warn(
+          { sourceGroup, scriptName: data.scriptName },
+          'run_host_script: group not authorized',
+        );
+        writeIpcResponse(responseFile, {
+          requestId: data.requestId,
+          exitCode: 1,
+          stdout: '',
+          stderr: '',
+          error: 'Not authorized to run this script',
+        });
+        break;
+      }
+
+      logger.info(
+        { sourceGroup, scriptName: data.scriptName, cwd: script.cwd },
+        'Running host script',
+      );
+      try {
+        const result = await execHostScript(script);
+        writeIpcResponse(responseFile, {
+          requestId: data.requestId,
+          ...result,
+        });
+        logger.info(
+          { sourceGroup, scriptName: data.scriptName, exitCode: result.exitCode },
+          'Host script completed',
+        );
+      } catch (err) {
+        writeIpcResponse(responseFile, {
+          requestId: data.requestId,
+          exitCode: 1,
+          stdout: '',
+          stderr: '',
+          error: String(err),
+        });
+      }
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');

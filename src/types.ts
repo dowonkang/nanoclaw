@@ -105,3 +105,23 @@ export type OnChatMetadata = (
   channel?: string,
   isGroup?: boolean,
 ) => void;
+
+export interface HostScript {
+  command: string;
+  cwd: string;
+  timeout?: number;
+  description?: string;
+  allowedGroups?: string[];
+}
+
+export interface HostScriptsConfig {
+  scripts: Record<string, HostScript>;
+}
+
+export interface HostScriptResult {
+  requestId: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  error?: string;
+}
