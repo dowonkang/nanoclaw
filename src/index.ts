@@ -6,6 +6,7 @@ import {
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  TELEGRAM_BOT_POOL,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -46,6 +47,7 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { initBotPool } from './channels/telegram.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -69,9 +71,21 @@ let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+let mainGroupJid: string | null = null;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+
+async function notifyService(message: string): Promise<void> {
+  if (!mainGroupJid) return;
+  const channel = findChannel(channels, mainGroupJid);
+  if (!channel) return;
+  try {
+    await channel.sendMessage(mainGroupJid, message);
+  } catch (err) {
+    logger.warn({ err }, 'Failed to send service notification');
+  }
+}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -475,6 +489,8 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  mainGroupJid =
+    Object.entries(registeredGroups).find(([, g]) => g.isMain)?.[0] ?? null;
   restoreRemoteControl();
 
   // Start credential proxy (containers route API calls through this)
@@ -486,6 +502,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    await notifyService('NanoClaw offline');
     proxyServer.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
@@ -597,6 +614,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  await notifyService('NanoClaw online');
+
+  // Initialize Telegram bot pool for agent swarm (if configured)
+  if (TELEGRAM_BOT_POOL.length > 0) {
+    await initBotPool(TELEGRAM_BOT_POOL);
+  }
+
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
@@ -650,8 +674,15 @@ async function main(): Promise<void> {
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
-  startMessageLoop().catch((err) => {
+  process.on('uncaughtException', async (err) => {
+    logger.fatal({ err }, 'Uncaught exception');
+    await notifyService('NanoClaw crashed (restarting)').catch(() => {});
+    process.exit(1);
+  });
+
+  startMessageLoop().catch(async (err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
+    await notifyService('NanoClaw crashed (restarting)').catch(() => {});
     process.exit(1);
   });
 }
