@@ -1,4 +1,4 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, execSync } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
@@ -20,6 +20,17 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+
+const SECOND_SKULL_DIR = '/Users/dowon/Code/github/dowonkang/second-skull';
+
+function syncVault(label: string): void {
+  try {
+    execSync('bun run sync', { cwd: SECOND_SKULL_DIR, stdio: 'pipe' });
+    logger.info({ label }, 'Vault sync completed');
+  } catch (err) {
+    logger.warn({ label, err }, 'Vault sync failed (non-fatal)');
+  }
+}
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -107,6 +118,8 @@ async function runTask(
     { taskId: task.id, group: task.group_folder },
     'Running scheduled task',
   );
+
+  syncVault('pre-task');
 
   const groups = deps.registeredGroups();
   const group = Object.values(groups).find(
@@ -228,6 +241,8 @@ async function runTask(
     result,
     error,
   });
+
+  syncVault('post-task');
 
   const nextRun = computeNextRun(task);
   const resultSummary = error
