@@ -156,6 +156,14 @@ Chronological record of customizations applied to this NanoClaw instance.
 
 ---
 
+## 2026-03-24 — Vault Sync Fix
+
+### Fix: Obsidian Sync Broken Under launchd (`040e384`)
+- `syncVault` called `bun run sync` as a bare command, but NanoClaw's launchd plist PATH (`/usr/local/bin:/usr/bin:/bin`) excludes `/opt/homebrew/bin` where `bun` lives
+- Fixed by using full path `/opt/homebrew/bin/bun run sync` in `src/task-scheduler.ts`
+
+---
+
 ## 2026-03-23 — Agent Swarm Group & 3rd Pool Bot
 
 ### Config: Telegram Bot Pool Expanded
