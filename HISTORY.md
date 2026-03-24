@@ -158,9 +158,10 @@ Chronological record of customizations applied to this NanoClaw instance.
 
 ## 2026-03-24 — CI Fix & Vault Sync Fix
 
-### Fix: update-tokens CI Workflow
-- `actions/create-github-app-token` required `APP_ID` / `APP_PRIVATE_KEY` secrets that only exist on upstream, not in fork
-- Replaced GitHub App token steps with built-in `GITHUB_TOKEN` on the checkout step
+### Fix: CI Workflows Using Upstream-Only Secrets
+- `actions/create-github-app-token` in `update-tokens.yml` and `bump-version.yml` required `APP_ID` / `APP_PRIVATE_KEY` secrets that only exist on upstream, not in fork
+- Replaced GitHub App token steps with built-in `GITHUB_TOKEN` on checkout in both workflows
+- `merge-forward-skills.yml` already safe — uses `FORK_DISPATCH_TOKEN || GITHUB_TOKEN` fallback
 
 ### Fix: Obsidian Sync Broken Under launchd (`040e384`)
 - `syncVault` called `bun run sync` as a bare command, but NanoClaw's launchd plist PATH (`/usr/local/bin:/usr/bin:/bin`) excludes `/opt/homebrew/bin` where `bun` lives
