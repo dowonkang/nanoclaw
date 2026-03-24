@@ -25,7 +25,7 @@ const SECOND_SKULL_DIR = '/Users/dowon/Code/github/dowonkang/second-skull';
 
 function syncVault(label: string): void {
   try {
-    execSync('bun run sync', { cwd: SECOND_SKULL_DIR, stdio: 'pipe' });
+    execSync('/opt/homebrew/bin/bun run sync', { cwd: SECOND_SKULL_DIR, stdio: 'pipe' });
     logger.info({ label }, 'Vault sync completed');
   } catch (err) {
     logger.warn({ label, err }, 'Vault sync failed (non-fatal)');
