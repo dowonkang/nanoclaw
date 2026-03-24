@@ -169,6 +169,15 @@ Chronological record of customizations applied to this NanoClaw instance.
 
 ---
 
+## 2026-03-24 — claw CLI
+
+### Tool: claw CLI Installed
+- Copied `scripts/claw` from `.claude/skills/claw/` and made it executable
+- Installed binary to `$XDG_BIN_HOME` (`~/.local/bin/claw`)
+- Added `NANOCLAW_DIR` export to `~/.zshrc` so the script resolves the database when run outside the NanoClaw tree
+
+---
+
 ## 2026-03-23 — Agent Swarm Group & 3rd Pool Bot
 
 ### Config: Telegram Bot Pool Expanded
