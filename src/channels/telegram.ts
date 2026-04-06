@@ -42,6 +42,20 @@ async function sendTelegramMessage(
   }
 }
 
+/** Download a URL as text, forcing IPv4 to avoid ETIMEDOUT on IPv6-only hosts. */
+function fetchTextIPv4(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { family: 4 } as any, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 // Bot pool for agent teams: send-only Api instances (no polling)
 const poolApis: Api[] = [];
 // Maps "{groupFolder}:{senderName}" → pool Api index for stable assignment
@@ -258,7 +272,11 @@ export class TelegramChannel implements Channel {
     });
 
     // Handle non-text messages with placeholders so the agent knows something was sent
-    const storeNonText = (ctx: any, placeholder: string) => {
+    const storeNonText = (
+      ctx: any,
+      placeholder: string,
+      opts: { noCaption?: boolean } = {},
+    ) => {
       const chatJid = `tg:${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
@@ -269,7 +287,8 @@ export class TelegramChannel implements Channel {
         ctx.from?.username ||
         ctx.from?.id?.toString() ||
         'Unknown';
-      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const caption =
+        !opts.noCaption && ctx.message.caption ? ` ${ctx.message.caption}` : '';
 
       const isGroup =
         ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
@@ -295,8 +314,51 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
+    this.bot.on('message:document', async (ctx) => {
+      const doc = ctx.message.document;
+      const name = doc?.file_name || 'file';
+      const ext = name.includes('.')
+        ? name.slice(name.lastIndexOf('.')).toLowerCase()
+        : '';
+      const textExts = [
+        '.md',
+        '.txt',
+        '.json',
+        '.csv',
+        '.yaml',
+        '.yml',
+        '.xml',
+        '.html',
+        '.js',
+        '.ts',
+        '.py',
+        '.sh',
+        '.log',
+      ];
+      const isText =
+        textExts.includes(ext) ||
+        (doc?.mime_type || '').startsWith('text/') ||
+        doc?.mime_type === 'application/json';
+
+      if (isText && doc && (doc.file_size || 0) < 512 * 1024) {
+        try {
+          const file = await ctx.getFile();
+          const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+          const fileContent = await fetchTextIPv4(fileUrl);
+          const caption = ctx.message.caption || '';
+          const fileBlock = `[Document: ${name}]\n\nFile contents:\n\`\`\`\n${fileContent}\n\`\`\``;
+          const fullContent = caption
+            ? `${caption}\n\n${fileBlock}`
+            : fileBlock;
+          storeNonText(ctx, fullContent, { noCaption: true });
+          return;
+        } catch (err) {
+          logger.warn(
+            { err, name },
+            'Failed to download document, falling back to placeholder',
+          );
+        }
+      }
       storeNonText(ctx, `[Document: ${name}]`);
     });
     this.bot.on('message:sticker', (ctx) => {
